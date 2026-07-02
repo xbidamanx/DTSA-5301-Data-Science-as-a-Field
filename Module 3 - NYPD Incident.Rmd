@@ -1,0 +1,231 @@
+---
+title: "NYPD Shooting Incident"
+author: "Yee"
+date: "2026-03-19"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Objective
+The main objectives of this report is to analyze: How do shooting incidents vary over time, across boroughs, and by time of day, and are borough and hour associated with whether an incident is statistically flagged as a murder?
+
+This question is important because it allows the analysis to examine both descriptive patterns in the data and a simple modelling question about murder classification.
+
+
+## 1. Setup environment
+This chunk loads the packages used in the analysis. The tidyverse package is used for importing, cleaning, transforming, and visualizing the data. The lubridate package is used for working with dates.
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(lubridate)
+
+```
+
+## 2. Import data and preview
+The data used in this report comes from NYC Open Data, specifically the NYPD Shooting Incident Data (Historic) dataset. It was accessed from the following source:
+
+<https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic/resource/c564b578-fd8a-4005-8365-34150d306cc>
+
+The dataset contains historical records of shooting incidents in New York City. It includes variables such as the date and time of the incident, borough, precinct, location information, whether the incident was statistically flagged as a murder, and demographic characteristics of victims and perpetrators when available. This dataset is useful for studying patterns in shootings across time, place, and demographic groups, although some variables contain missing values.
+
+This chunk imports the NYPD shooting incident data directly from the online source. This makes the analysis reproducible because anyone running the code can access the same dataset. The glimpse() function provides an overview of the variables and structure of the data.
+
+```{r import}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+shootings_raw <- read_csv(url, show_col_types = FALSE)
+
+glimpse(shootings_raw)
+
+
+```
+
+## 3. Clean, tidy data, and pre-process dates
+This chunk standardizes variable names, parses dates, and handles missing values.
+It also converts the date and time into proper formats. It creates new variables for year, month, weekday, and hour. These variables make it easier to analyze trends over time and patterns by time of day.
+
+```{r}
+
+shootings <- shootings_raw %>%
+  rename(
+    date = OCCUR_DATE,
+    time = OCCUR_TIME,
+    borough = BORO,
+    precinct = PRECINCT,
+    murder_flag = STATISTICAL_MURDER_FLAG,
+    vic_age_group = VIC_AGE_GROUP,
+    vic_sex = VIC_SEX,
+    vic_race = VIC_RACE,
+    perp_age_group = PERP_AGE_GROUP,
+    perp_sex = PERP_SEX,
+    perp_race = PERP_RACE
+  ) %>%
+  mutate(
+    date = mdy(date),
+    year = year(date),
+    month = month(date, label = TRUE, abbr = TRUE),
+    weekday = wday(date, label = TRUE, abbr = TRUE),
+    hour = as.numeric(substr(time, 1, 2)),
+    borough = str_to_title(borough)
+  )
+
+glimpse(shootings)
+
+```
+## 4. Check missing values
+This chunk counts the number of missing values in each variable. The main variables used in this report, such as date, time, borough, murder flag, year, month, weekday, and hour, have no missing values. This is helpful because it means the main visualizations and model can be created without losing observations. However, some perpetrator variables and location description variables have substantial missing data, which is important to keep in mind when interpreting results.
+```{r}
+colSums(is.na(shootings))
+```
+## 5. Basic summary 
+This summary gives an overview of the dataset, including the distributions of numeric variables and the categories in character variables. It helps confirm that the data has been imported and transformed correctly before moving into deeper analysis.
+
+```{r}
+summary(shootings)
+```
+
+## 6. Number of shooting incidents by year
+This graph shows how the number of shooting incidents changes over time. It helps identify whether incidents increased, decreased, or fluctuated across years. This is one of the most important descriptive views in the report because it shows the long-term pattern in the data.
+```{r}
+shootings %>%
+  count(year) %>%
+  ggplot(aes(x = year, y = n)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(
+    title = "Number of Shooting Incidents by Year",
+    x = "Year",
+    y = "Number of Incidents"
+  )
+```
+
+**Conclusion:**
+The number of shooting incidents generally declined from the late 2000s to around 2018–2019, followed by a sharp increase in 2020 and 2021. After that spike, incidents decreased again, although they still remained above the lowest levels seen before 2020.
+
+
+## 7. Number of shootings incidents by borough
+This bar chart compares the number of shooting incidents across boroughs. It shows that incidents are not evenly distributed across the city. Some boroughs have much higher counts than others, which suggests that place is an important dimension of the dataset.
+```{r}
+shootings %>%
+  count(borough) %>%
+  ggplot(aes(x = reorder(borough, n), y = n, fill = borough)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Number of Shooting Incidents by Borough",
+    x = "Borough",
+    y = "Number of Incidents"
+  ) +
+  theme(legend.position = "none")
+```
+
+**Conclusion:**
+Shooting incidents are not evenly distributed across boroughs. Brooklyn has the highest number of recorded incidents, followed by the Bronx, while Staten Island has the lowest.
+
+## 8. Number of shooting incidents by hour of day
+
+```{r}
+shootings %>%
+  count(hour) %>%
+  ggplot(aes(x = hour, y = n)) +
+  geom_line(color = "red") +
+  geom_point(color = "red") +
+  labs(
+    title = "Number of Shooting Incidents by Hour of Day",
+    x = "Hour",
+    y = "Number of Incidents"
+  )
+```
+
+**Conclusion:**
+Shooting incidents are most common during the late evening and around midnight, while the lowest number of incidents occurs in the early morning hours. This suggests that shootings are more concentrated at night than during the daytime.
+
+
+## 9. Heatmap of shootings by Weekday and hour
+```{r}
+shootings %>%
+  mutate(
+    weekday = factor(
+      weekday,
+      levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    )
+  ) %>%
+  count(weekday, hour) %>%
+  ggplot(aes(x = hour, y = weekday, fill = n)) +
+  geom_tile() +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  scale_y_discrete(limits = rev(c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))) +
+  labs(
+    title = "Shootings by Weekday and Hour",
+    x = "Hour",
+    y = "Weekday",
+    fill = "Count"
+  )
+```
+
+
+**Conclusion:**
+As seen earlier, shooting incidents are most concentrated during late-night hours. We then plot the occurrence with day of the week and noticed that shooting incidents are occur more on weekends such as Saturday and Sunday. In contrast, incidents are less common during the morning and early daytime hours across most weekdays.
+
+
+## 10. Logistic Regression Model
+This chunk fits a logistic regression model predicting whether an incident was flagged as a murder. The predictors in the model are hour and borough. Since the outcome variable is binary, logistic regression is an appropriate method. This model helps examine whether time of day and borough are associated with the odds of an incident being classified as a murder.
+
+```{r}
+model1 <- glm(murder_flag ~ hour + borough, data = shootings, family = "binomial")
+
+summary(model1)
+```
+**Conclusion:**
+The logistic regression model shows that hour of day was not a statistically significant predictor of whether a shooting was flagged as a murder, with an estimated coefficient of -0.0009705 and a p-value of 0.5777. 
+
+Among the borough variables, Manhattan was the only statistically significant result, with a coefficient of -0.0965102 and a p-value of 0.0497, suggesting slightly lower odds of murder classification compared with the reference borough. 
+
+Brooklyn, Queens, and Staten Island were not statistically significant, with p-values of 0.8909, 0.8522, and 0.4346 respectively. Overall, the model explains only a very small amount of variation, as shown by the null deviance of 29251 and residual deviance of 29245, meaning hour and borough alone do not strongly predict whether an incident is classified as a murder.
+
+
+## 11. Predicted Probabilities
+This chunk calculates predicted probabilities from the logistic regression model. These values estimate the probability that each incident is flagged as a murder based on the variables in the model.
+
+```{r}
+model_data <- shootings %>%
+  mutate(predicted_prob = predict(model1, type = "response"))
+
+ggplot(model_data, aes(x = predicted_prob)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  labs(
+    title = "Predicted Probability of Murder Flag",
+    x = "Predicted Probability",
+    y = "Count"
+  )
+```
+**Conclusion:**
+The predicted probabilities are concentrated in a narrow range, mostly around 0.19 to 0.20, which suggests that the model does not strongly separate incidents into very low- or high-risk groups. This supports the earlier result that hour and borough alone have limited power in predicting whether a shooting is flagged as a murder.
+
+
+This also aligns with the logistic regression results because the predicted probabilities are clustered in a very narrow range, showing that hour and borough do not provide strong predictive power for whether an incident is flagged as a murder.
+
+
+## 12. Bias and Limitations
+This dataset has several possible sources of bias and limitation. 
+
+Firstly, it only includes shooting incidents that were recorded by police, so it may not represent all events. Second, some variables have substantial missing values, especially perpetrator age, sex, and race, as well as some location description variables. This means that summaries involving perpetrator characteristics may be incomplete or biased. 
+
+Secondly, the data may reflect police reporting and classification practices, not only the true pattern of violence. 
+
+Finally, the logistic regression model in this report uses only hour and borough as predictors, so it does not account for other important factors such as neighborhood conditions, poverty, weapon type, or medical response.
+
+Because of these limitations, the findings should be interpreted as patterns in the recorded data rather than as proof of causation.
+
+## 13. Final Conclusion
+The results showed that shooting incidents changed over time, were concentrated in certain boroughs, and occurred more often during late evening and nighttime hours. The model found that hour of day was not a statistically significant predictor of whether an incident was flagged as a murder, and most borough differences were also not significant, with Manhattan being the only borough showing a small significant difference compared with the reference group. The predicted probabilities were clustered in a narrow range, which suggests that hour and borough alone have limited ability to predict murder classification. Overall, the analysis identified useful descriptive patterns in the data, while also showing the importance of considering missing data, reporting practices, and omitted variables.
+
+
+
+
+```{r}
+sessionInfo()
+```
+
