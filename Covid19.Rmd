@@ -1,0 +1,224 @@
+---
+title: "Covid19"
+output: html_document
+---
+## 1. Introduction: Question of Interest
+
+This report aims to investigate the relationship between confirmed COVID-19 cases and deaths over time, and to examine how the severity of the pandemic—measured by the Case Fatality Rate (CFR)—has evolved globally and in the United States. Specifically, the analysis seeks to determine whether increases in confirmed cases are associated with increases in deaths, and how the risk of death per confirmed case has changed throughout the pandemic.
+
+
+## 2. Data Source
+The data used in this analysis is obtained from the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE) COVID-19 Dataset, a widely used and publicly available dataset that provides daily updates on global COVID-19 cases and deaths. The dataset contains time-series data of COVID-19 statistics.
+
+## 3. Setup Environment
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+## 4.Import Data
+```{r}
+confirmed_global <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+
+deaths_global <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
+
+confirmed_us <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv")
+
+deaths_us <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+```
+
+
+## 5.Inspect Data
+```{r, echo=TRUE, results='hide'}
+glimpse(confirmed_global)
+glimpse(deaths_global)
+
+glimpse(confirmed_us)
+glimpse(deaths_us)
+```
+
+## 6.Clean Data
+I performed two main data preparation step:
+
+1. Date formatting
+To prepare the data for analysis, both the global and US datasets were transformed into a long (tidy) format using the pivot_longer() function. This restructuring consolidates all date columns into a single date variable, with corresponding confirmed and deaths values, making the dataset easier to analyze and visualize over time.
+
+2. Join "Confirmed" table and "Deaths" table.
+The confirmed cases and deaths datasets were merged using a left join. This cleaning process resulted in two structured datasets (global_data and us_data) that contain aligned and time-indexed information on confirmed cases and deaths, providing a reliable foundation for subsequent analysis.
+```{r}
+confirmed_global_long <- confirmed_global %>%
+  pivot_longer(cols = starts_with("1/"),
+               names_to = "date",
+               values_to = "confirmed") %>%
+  mutate(date = mdy(date))
+
+deaths_global_long <- deaths_global %>%
+  pivot_longer(cols = starts_with("1/"),
+               names_to = "date",
+               values_to = "deaths") %>%
+  mutate(date = mdy(date))
+
+global_data <- confirmed_global_long %>%
+  left_join(deaths_global_long,
+            by = c("Province/State", "Country/Region", "Lat", "Long", "date"))
+
+confirmed_us_long <- confirmed_us %>%
+  pivot_longer(cols = starts_with("1/"),
+               names_to = "date",
+               values_to = "confirmed") %>%
+  mutate(date = mdy(date))
+
+deaths_us_long <- deaths_us %>%
+  pivot_longer(cols = starts_with("1/"),
+               names_to = "date",
+               values_to = "deaths") %>%
+  mutate(date = mdy(date))
+
+us_data <- confirmed_us_long %>%
+  left_join(deaths_us_long,
+            by = c("UID", "iso2", "iso3", "code3", "FIPS",
+                   "Admin2", "Province_State", "Country_Region",
+                   "Lat", "Long_", "Combined_Key", "date"))
+```
+
+## 7. Aggregation
+
+After cleaning and restructuring the datasets, the data was aggregated to obtain daily totals of confirmed cases and deaths. This was done by grouping the data by date and summing the number of confirmed cases and deaths across all regions.
+
+Aggregating the data at the date level reduces complexity and allows for clearer comparisons and trend analysis between the global and US situations over time.
+```{r}
+global_summary <- global_data %>%
+  group_by(date) %>%
+  summarise(
+    confirmed = sum(confirmed, na.rm = TRUE),
+    deaths = sum(deaths, na.rm = TRUE)
+  )
+
+us_summary <- us_data %>%
+  group_by(date) %>%
+  summarise(
+    confirmed = sum(confirmed, na.rm = TRUE),
+    deaths = sum(deaths, na.rm = TRUE)
+  )
+
+global_summary <- global_summary %>%
+  mutate(cfr = deaths / confirmed)
+
+us_summary <- us_summary %>%
+  mutate(cfr = deaths / confirmed)
+```
+
+## 8. Visualization 1: Global vs US Cases
+
+The line chart illustrates the cumulative number of confirmed COVID-19 cases over time for both the global population and the United States. Overall, both curves show a strong upward trend, reflecting the continued spread of the virus throughout the pandemic period.
+
+The global case count is consistently much higher than that of the United States, which is expected since it represents the aggregation of all countries. However, the US still contributes a significant portion of global cases, as seen from the steady rise in its curve.
+
+Notably, both lines exhibit periods of sharper increases, particularly around 2021–2022, indicating waves of infection likely driven by new variants and increased transmission rates. These surges are more pronounced in the global data due to the combined effects across multiple regions.
+```{r}
+combined_summary <- global_summary %>%
+  mutate(region = "Global") %>%
+  bind_rows(us_summary %>% mutate(region = "US"))
+
+ggplot(combined_summary, aes(x = date, y = confirmed, color = region)) +
+  geom_line() +
+  labs(title = "COVID-19 Confirmed Cases: Global vs US",
+       y = "Confirmed Cases") +
+  theme_minimal()
+```
+
+## 9. Visualization 2: Top Countries by Total Cases
+
+The bar chart presents the top 10 countries with the highest total number of confirmed COVID-19 cases. The countries are ranked in descending order, allowing for easy comparison of their relative case counts.
+
+The differences in bar lengths highlight the uneven distribution of COVID-19 cases across countries. While several countries have experienced large outbreaks, the magnitude varies considerably due to factors such as population size, testing capacity, public health measures, and reporting practices.
+```{r}
+latest_data <- global_data %>%
+  group_by(`Country/Region`) %>%
+  summarise(total_cases = max(confirmed, na.rm = TRUE)) %>%
+  arrange(desc(total_cases)) %>%
+  slice(1:10)
+
+ggplot(latest_data, aes(x = reorder(`Country/Region`, total_cases),
+                        y = total_cases)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 10 Countries by Total COVID-19 Cases",
+       x = "Country",
+       y = "Total Cases") +
+  theme_minimal()
+```
+
+## 10. Model: Predicting Deaths from Cases (Global)
+
+A linear regression model was developed to examine the relationship between confirmed COVID-19 cases and deaths at the global level. The model uses confirmed cases as the predictor variable and deaths as the response variable.
+
+The results show a strong positive and statistically significant relationship between confirmed cases and deaths (p < 0.001).
+
+The scatter plot with the fitted regression line visually supports this finding, showing a clear upward linear trend. However, some deviations from the line can be observed, indicating that the relationship is not perfectly linear. This also suggests potential non-linearity or heteroscedasticity (changing variance), meaning that the model may not fully capture all underlying dynamics.
+
+```{r}
+model <- lm(deaths ~ confirmed, data = global_summary)
+summary(model)
+
+ggplot(global_summary, aes(x = confirmed, y = deaths)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Relationship Between Confirmed Cases and Deaths",
+       x = "Confirmed Cases",
+       y = "Deaths") +
+  theme_minimal()
+
+global_summary$residuals <- residuals(model)
+
+ggplot(global_summary, aes(x = confirmed, y = residuals)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(title = "Residual Plot",
+       x = "Confirmed Cases",
+       y = "Residuals") +
+  theme_minimal()
+```
+
+## 11. Additional Analysis Beyond Class: Case Fatality Rate Comparison
+
+The line chart compares the Case Fatality Rate (CFR) over time between global data and the United States, starting from April 2020. CFR is calculated as the proportion of deaths relative to confirmed cases, providing an indication of disease severity and healthcare effectiveness.
+
+Both regions show consistent improvement over time. Major structural drop around 2022 indicates a turning point in the pandemic. Final CFR levels are similar, suggesting global alignment in outcomes
+```{r}
+cfr_data <- global_summary %>%
+  select(date, cfr) %>%
+  mutate(region = "Global") %>%
+  bind_rows(
+    us_summary %>%
+      select(date, cfr) %>%
+      mutate(region = "US")
+  ) %>%
+  filter(date > as.Date("2020-04-01"))
+
+ggplot(cfr_data, aes(x = date, y = cfr, color = region)) +
+  geom_line(size = 1) +
+  labs(title = "Case Fatality Rate: Global vs US",
+       y = "CFR",
+       x = "Date") +
+  theme_minimal()
+```
+
+## 12. Final Conclusions and Potential Bias
+
+This report analyzed global and United States COVID-19 data to understand trends in confirmed cases, deaths, and fatality rates over time. The findings show that while confirmed cases and deaths are strongly positively correlated, this relationship is influenced by the cumulative nature of the data and should be interpreted with caution.
+
+Overall, the findings highlight that while case numbers strongly relate to deaths, the risk of death per infection has decreased significantly over time, reflecting progress in managing the pandemic.
+
+Despite meaningful insights, several sources of bias may affect the validity of this analysis:
+
+- Underreporting of Cases  
+
+- Time Lag Between Cases and Deaths  
+
+- Differences in Testing Rates  
+
+- Variation in Reporting Standards  
